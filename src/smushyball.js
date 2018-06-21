@@ -1,17 +1,19 @@
 define(function() {
 
-var resolution	= 1000;
-var hurtFactor	= 2000;
-var healFactor	= 20;
+var resolution		= 1000;
+var deformFactor	= 1000;
+var healFactor		= 10;
+var surfaceFactor	= 20;
 
 function SmushyBall()
 {
 	try
 	{
 		this.debug = {
+			on: true,
 			dt_log: [],
-			dt_log_limit: 20,
-			framerate: null
+			dt_log_limit: 100,
+			framerate: '-'
 		};
 
 		this.last_update = new Date().getTime();
@@ -28,6 +30,39 @@ function SmushyBall()
 		console.error('SmushyBall Error:', e);
 	}
 }
+
+SmushyBall.prototype.debugUpdate = function(dt)
+{
+	var debug = this.debug;
+	if (!debug.on)
+		{ return; }
+
+	debug.dt_log.push(dt);
+	if (debug.dt_log.length >= debug.dt_log_limit)
+	{
+		var sum = 0;
+		var l = debug.dt_log.length;
+		for (var i = 0; i < l; i++)
+		{
+			sum += debug.dt_log[i];
+		}
+		debug.framerate = Math.round(l / sum);
+		debug.dt_log = [];
+	}
+};
+
+SmushyBall.prototype.debugDraw = function(dt)
+{
+	var debug = this.debug;
+	if (!debug.on)
+		{ return; }
+
+	if (debug.framerate)
+	{
+		this.context.font = "20px Monospace";
+		this.context.fillText(debug.framerate + ' fps',10,20);
+	}
+};
 
 SmushyBall.prototype.initCanvas = function() {
 	var _this = this;
@@ -52,7 +87,7 @@ SmushyBall.prototype.initPoints = function() {
 	var h = this.canvas.height;
 
 	var center = {x: w/2, y: h/2};
-	var radius = Math.min(w, h) / 4;
+	var radius = Math.min(w, h) / 5;
 	var num = resolution;
 
 	this.points = [];
@@ -89,20 +124,6 @@ SmushyBall.prototype.loop = function() {
 
 SmushyBall.prototype.update = function(dt)
 {
-	this.debug.dt_log.push(dt);
-	if (this.debug.dt_log.length >= this.debug.dt_log_limit)
-	{
-		var sum = 0;
-		var l = this.debug.dt_log.length;
-		for (var i = 0; i < l; i++)
-		{
-			sum += this.debug.dt_log[i];
-		}
-		this.debug.framerate = l / sum;
-		this.debug.dt_log = [];
-		console.log(this.debug.framerate + ' fps');
-	}
-
 	if (!this.mouseX || !this.mouseY)
 		{ return; }
 
@@ -116,10 +137,13 @@ SmushyBall.prototype.update = function(dt)
 		{
 			point = this.points[i];
 
-			point.hurt(dt, mouseX, mouseY);
+			point.surfaceTension(dt);
+			point.deform(dt, mouseX, mouseY);
 			point.heal(dt);
 		}
 	}
+
+	this.debugUpdate(dt);
 }
 
 SmushyBall.prototype.draw = function()
@@ -128,15 +152,15 @@ SmushyBall.prototype.draw = function()
 	var ctx = this.context;
 
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
-	ctx.fillStyle = '#660000';
-	ctx.strokeStyle = '#ff0000';
+	ctx.fillStyle = '#bd7e00';
+	ctx.strokeStyle = '#ffff00';
+	ctx.lineWidth = 2;
 
 	ctx.beginPath();
 
 	if (this.points.length > 0)
 	{
 		var point, last, next;
-		var xdiff, ydiff, dist1, dist2, dir1, dir2;
 		for (var i = 0, l = this.points.length; i <= l; i++)
 		{
 			point = this.points[i % l];
@@ -147,10 +171,12 @@ SmushyBall.prototype.draw = function()
 				ctx.lineTo(point.x, point.y);
 		}
 	}
-
 	ctx.fill();
 	ctx.stroke();
+
+	this.debugDraw();
 };
+
 
 SmushyBall.Point = function(x, y) {
 	this.x = x;
@@ -160,37 +186,15 @@ SmushyBall.Point = function(x, y) {
 		y: y
 	};
 };
-SmushyBall.Point.prototype.hurt = function(dt, mouseX, mouseY)
+SmushyBall.Point.prototype.set = function(property, value)
 {
-	if (!mouseX || !mouseY)
-		{ return; }
-
-	var xdiff, ydiff, dir, dist, power;
-
-	xdiff = mouseX - this.x;
-	ydiff = mouseY - this.y;
-	dir = Math.atan2(ydiff, xdiff);
-	dist = Math.sqrt(xdiff*xdiff + ydiff*ydiff);
-
-	power = hurtFactor / dist*dist;
-
-	this.x -= dt * power * Math.cos(dir);
-	this.y -= dt * power * Math.sin(dir);
+	if (!property)
+		{ return console.error('SmushyBall.Point.set(): bad property - '+property); }
+	if (!value)
+		{ return console.error('SmushyBall.Point.set(): bad value - '+value); }
+	this[property] = value;
 };
-SmushyBall.Point.prototype.heal = function(dt)
-{
-	var xdiff, ydiff, dir, dist, power;
 
-	xdiff = this.anchor.x - this.x;
-	ydiff = this.anchor.y - this.y;
-	dir = Math.atan2(ydiff, xdiff);
-	dist = Math.sqrt(xdiff*xdiff + ydiff*ydiff);
-
-	power = healFactor * dist;
-
-	this.x += dt * power * Math.cos(dir);
-	this.y += dt * power * Math.sin(dir);
-};
 SmushyBall.Point.prototype.back = function(steps)
 {
 	steps = steps || 1;
@@ -215,6 +219,100 @@ SmushyBall.Point.prototype.forward = function(steps)
 
 	return ref;
 };
+
+/**
+ * Distort point with mouse interaction.
+ * @param float dt Delta Time
+ * @param int mouseX Mouse X position
+ * @param int mouseY Mouse Y position
+ */
+SmushyBall.Point.prototype.deform = function(dt, mouseX, mouseY)
+{
+	if (!mouseX || !mouseY)
+		{ return; }
+
+	var xdiff, ydiff, dir, dist, power, deformX, deformY;
+
+	xdiff = Math.floor(mouseX - this.x);
+	ydiff = Math.floor(mouseY - this.y);
+	dir = Math.atan2(ydiff, xdiff);
+	dist = Math.sqrt(xdiff*xdiff + ydiff*ydiff);
+
+	power = deformFactor / dist*dist;
+
+	deformX = dt * power * Math.cos(dir);
+	deformY = dt * power * Math.sin(dir);
+
+	if (isNaN(deformX) || isNaN(deformY))
+	{
+		return;
+	}
+
+	this.x -= deformX;
+	this.y -= deformY;
+};
+
+/**
+ * Make point return to its anchor.
+ * @param float dt Delta Time
+ */
+SmushyBall.Point.prototype.heal = function(dt)
+{
+	var xdiff, ydiff, dir, dist, power;
+
+	xdiff = Math.floor(this.anchor.x - this.x);
+	ydiff = Math.floor(this.anchor.y - this.y);
+	dir = Math.atan2(ydiff, xdiff);
+	dist = Math.sqrt(xdiff*xdiff + ydiff*ydiff);
+
+	power = healFactor * dist;
+
+	deformX = dt * power * Math.cos(dir);
+	deformY = dt * power * Math.sin(dir);
+
+	if (isNaN(deformX) || isNaN(deformY))
+	{
+		return;
+	}
+
+	this.x += deformX;
+	this.y += deformY;
+};
+
+/**
+ * Make point resist being pulled from its neighbors
+ * @param float dt Delta Time
+ */
+SmushyBall.Point.prototype.surfaceTension = function(dt)
+{
+	var power = surfaceFactor;
+
+	var points = [];
+	points.push(this.back());
+	points.push(this.forward());
+
+	var p, xdiff, ydiff, dir, dist, deformX, deformY;
+	for (var i in points)
+	{
+		p = points[i];
+		xdiff = Math.floor(this.x - p.x);
+		ydiff = Math.floor(this.y - p.y);
+		dir = Math.atan2(ydiff, xdiff);
+		dist = Math.sqrt(xdiff*xdiff + ydiff*ydiff);
+
+		deformX = dt * power * dist * Math.cos(dir);
+		deformY = dt * power * dist * Math.sin(dir);
+
+		if (isNaN(deformX) || isNaN(deformY))
+		{
+			continue;
+		}
+
+		this.x -= deformX;
+		this.y -= deformY;
+	}
+};
+
 
 return new SmushyBall();
 });
