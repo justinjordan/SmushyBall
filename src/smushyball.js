@@ -1,4 +1,4 @@
-define(function() {
+(function() {
 
 var resolution		= 1000;
 var deformFactor	= 1000;
@@ -313,6 +313,6 @@ SmushyBall.Point.prototype.surfaceTension = function(dt)
 	}
 };
 
+window.smushyBall = new SmushyBall();
 
-return new SmushyBall();
-});
+})();
